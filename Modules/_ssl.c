@@ -291,6 +291,9 @@ typedef struct {
     PyObject *set_hostname;
 #endif
     int check_hostname;
+#ifdef OPENSSL_VERSION_1_1
+    PyObject *aia_callback;
+#endif
 } PySSLContext;
 
 typedef struct {
@@ -2756,6 +2759,12 @@ _ssl__SSLContext_impl(PyTypeObject *type, int proto_version)
     }
 #endif
 
+#ifdef OPENSSL_VERSION_1_1
+    /* By default there is no AIA chasing. */
+    self->aia_callback = NULL;
+#endif
+
+    SSL_CTX_set_app_data(self->ctx, self);
     return (PyObject *)self;
 }
 
@@ -2859,6 +2868,123 @@ _ssl__SSLContext_get_ciphers_impl(PySSLContext *self)
 }
 #endif
 
+#ifdef OPENSSL_VERSION_1_1
+X509 *_cert_from_bytes(PyObject *cert_bytes) {
+    X509 *cert = NULL;
+    char *cert_string;
+    Py_ssize_t cert_size;
+
+    if ((cert_bytes != NULL) && (!PyBytes_Check(cert_bytes))) {
+        return NULL;
+    }
+
+    cert_string = PyBytes_AsString(cert_bytes);
+    cert_size = PyBytes_Size(cert_bytes);
+
+    if (cert_size > INT_MAX) {
+        return NULL;
+    }
+
+    cert = d2i_X509(NULL, (const unsigned char **)&cert_string, cert_size);
+    return cert;
+}
+
+/* This callback is used to farm out to the AIA chasing callback. */
+int _aia_chasing_cb(X509 **issuer, X509_STORE_CTX *store_ctx, X509 *current_cert) {
+    int result;
+    SSL *ssl;
+    SSL_CTX *ctx;
+    X509 *aia_issuer = NULL;
+    PySSLContext *our_context;
+    PySSLSocket *our_socket;
+    PyObject *issuers;
+    PyObject *issuer_iterator;
+    PyObject *issuer_url;
+
+    /* First we call the default implementation. If this finds an issuer or
+     * hits an error, we want to stop. */
+    result = X509_STORE_CTX_get1_issuer(issuer, store_ctx, current_cert);
+    if (result != 0) {
+        return result;
+    }
+
+    ssl = X509_STORE_CTX_get_ex_data(store_ctx, SSL_get_ex_data_X509_STORE_CTX_idx());
+    ctx = SSL_get_SSL_CTX(ssl);
+    our_context = (PySSLContext *)SSL_CTX_get_app_data(ctx);
+    our_socket = (PySSLSocket *)SSL_get_app_data(ssl);
+
+    /* Ok, no issuer was found. We want to fire our AIA callback to get some
+     * certs. We do this by grabbing the AIA extension and getting any HTTP/HTTPS
+     * URLs out of it, and calling the AIA callback with each one in turn. */
+    PySSL_END_ALLOW_THREADS_S(our_socket->thread_state);
+    issuers = _get_aia_uri(current_cert, NID_ad_ca_issuers);
+    if ((issuers != NULL) && (issuers != Py_None)) {
+        /* This works unconditionally because _get_aia_url always returns a tuple */
+        issuer_iterator = PyObject_GetIter(issuers);
+        while ((issuer_url = PyIter_Next(issuer_iterator))) {
+            PyObject *cert_bytes = PyObject_CallFunctionObjArgs(
+                our_context->aia_callback, issuer_url, NULL
+            );
+            aia_issuer = _cert_from_bytes(cert_bytes);
+            Py_XDECREF(cert_bytes);
+            Py_XDECREF(issuer_url);
+
+            /* We got something. Let's use it! */
+            if (aia_issuer != NULL) {
+                *issuer = aia_issuer;
+                break;
+            }
+        }
+        Py_XDECREF(issuer_iterator);
+    }
+
+    PySSL_BEGIN_ALLOW_THREADS_S(our_socket->thread_state);
+     return (aia_issuer != NULL) ? 1 : 0;
+}
+
+/*[clinic input]
+_ssl._SSLContext.set_aia_callback
+
+    method as cb: object
+    /
+
+Set a callback that will be called to perform AIA chasing.
+
+AIA chasing is used to attempt to build certificate chains when the remote peer
+has not provided all of their necessary intermediates. Many certificates
+provide a URL to retrieve their issuing certificate. The callback registered
+here will be called with a single argument, a string containing a URL that
+needs to be looked up to obtain the issuing certificate. The callback must
+return the data at that URL. If an error is encountered looking up that URL,
+the callback should return None.
+[clinic start generated code]*/
+
+static PyObject *
+_ssl__SSLContext_set_aia_callback(PySSLContext *self, PyObject *cb)
+/*[clinic end generated code: output=3a1435cf1b5c5a55 input=be0585915abc4a90]*/
+{
+    X509_STORE *cert_store;
+    PyObject *old_callback;
+
+    if (!PyCallable_Check(cb) && (cb != Py_None)) {
+        PyErr_SetString(PyExc_TypeError, "callback must be callable");
+        return NULL;
+    }
+
+    old_callback = self->aia_callback;
+    Py_XDECREF(old_callback);
+
+    Py_XINCREF(cb);
+    self->aia_callback = cb;
+    cert_store = SSL_CTX_get_cert_store(self->ctx);
+    if (cb != Py_None) {
+        X509_STORE_set_get_issuer(cert_store, _aia_chasing_cb);
+    } else {
+        X509_STORE_set_get_issuer(cert_store, NULL);
+    }
+    return Py_None;
+}
+#endif
 
 #ifdef OPENSSL_NPN_NEGOTIATED
 static int
@@ -4016,6 +4142,7 @@ static struct PyMethodDef context_methods[] = {
     _SSL__SSLCONTEXT_CERT_STORE_STATS_METHODDEF
     _SSL__SSLCONTEXT_GET_CA_CERTS_METHODDEF
     _SSL__SSLCONTEXT_GET_CIPHERS_METHODDEF
+    _SSL__SSLCONTEXT_SET_AIA_CALLBACK_METHODDEF
     {NULL, NULL}        /* sentinel */
 };
 

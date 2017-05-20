@@ -403,6 +403,27 @@ _ssl__SSLContext_get_ciphers(PySSLContext *self, PyObject *Py_UNUSED(ignored))
 
 #endif /* (OPENSSL_VERSION_NUMBER >= 0x10002000UL) */
 
+#if defined(OPENSSL_VERSION_1_1)
+
+PyDoc_STRVAR(_ssl__SSLContext_set_aia_callback__doc__,
+"set_aia_callback($self, method, /)\n"
+"--\n"
+"\n"
+"Set a callback that will be called to perform AIA chasing.\n"
+"\n"
+"AIA chasing is used to attempt to build certificate chains when the remote peer\n"
+"has not provided all of their necessary intermediates. Many certificates\n"
+"provide a URL to retrieve their issuing certificate. The callback registered\n"
+"here will be called with a single argument, a string containing a URL that\n"
+"needs to be looked up to obtain the issuing certificate. The callback must\n"
+"return the data at that URL. If an error is encountered looking up that URL,\n"
+"the callback should return None.");
+
+#define _SSL__SSLCONTEXT_SET_AIA_CALLBACK_METHODDEF    \
+    {"set_aia_callback", (PyCFunction)_ssl__SSLContext_set_aia_callback, METH_O, _ssl__SSLContext_set_aia_callback__doc__},
+
+#endif /* defined(OPENSSL_VERSION_1_1) */
+
 PyDoc_STRVAR(_ssl__SSLContext__set_npn_protocols__doc__,
 "_set_npn_protocols($self, protos, /)\n"
 "--\n"
@@ -1165,6 +1186,10 @@ exit:
     #define _SSL__SSLCONTEXT_GET_CIPHERS_METHODDEF
 #endif /* !defined(_SSL__SSLCONTEXT_GET_CIPHERS_METHODDEF) */
 
+#ifndef _SSL__SSLCONTEXT_SET_AIA_CALLBACK_METHODDEF
+    #define _SSL__SSLCONTEXT_SET_AIA_CALLBACK_METHODDEF
+#endif /* !defined(_SSL__SSLCONTEXT_SET_AIA_CALLBACK_METHODDEF) */
+
 #ifndef _SSL__SSLCONTEXT_SET_ECDH_CURVE_METHODDEF
     #define _SSL__SSLCONTEXT_SET_ECDH_CURVE_METHODDEF
 #endif /* !defined(_SSL__SSLCONTEXT_SET_ECDH_CURVE_METHODDEF) */
@@ -1180,4 +1205,4 @@ exit:
 #ifndef _SSL_ENUM_CRLS_METHODDEF
     #define _SSL_ENUM_CRLS_METHODDEF
 #endif /* !defined(_SSL_ENUM_CRLS_METHODDEF) */
-/*[clinic end generated code: output=53cd9100580b45a2 input=a9049054013a1b77]*/
+/*[clinic end generated code: output=0b759e5a87c252f6 input=a9049054013a1b77]*/
