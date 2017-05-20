@@ -304,6 +304,9 @@ typedef struct {
     enum py_ssl_server_or_client socket_type;
     PyObject *owner; /* Python level "owner" passed to servername callback */
     PyObject *server_hostname;
+#ifdef OPENSSL_VERSION_1_1
+    PyThreadState *thread_state; /* For restoring thread state in callbacks */
+#endif
 } PySSLSocket;
 
 typedef struct {
@@ -603,6 +606,7 @@ newPySSLSocket(PySSLContext *sslctx, PySocketSockObject *sock,
     self->handshake_done = 0;
     self->owner = NULL;
     self->server_hostname = NULL;
+    self->thread_state = NULL;
     if (server_hostname != NULL) {
         PyObject *hostname = PyUnicode_Decode(server_hostname, strlen(server_hostname),
                                               "idna", "strict");
@@ -709,10 +713,10 @@ _ssl__SSLSocket_do_handshake_impl(PySSLSocket *self)
     /* Actually negotiate SSL connection */
     /* XXX If SSL_do_handshake() returns 0, it's also a failure. */
     do {
-        PySSL_BEGIN_ALLOW_THREADS
+        PySSL_BEGIN_ALLOW_THREADS_S(self->thread_state);
         ret = SSL_do_handshake(self->ssl);
         err = SSL_get_error(self->ssl, ret);
-        PySSL_END_ALLOW_THREADS
+        PySSL_END_ALLOW_THREADS_S(self->thread_state);
 
         if (PyErr_CheckSignals())
             goto error;
@@ -750,9 +754,9 @@ _ssl__SSLSocket_do_handshake_impl(PySSLSocket *self)
 
     if (self->peer_cert)
         X509_free (self->peer_cert);
-    PySSL_BEGIN_ALLOW_THREADS
+    PySSL_BEGIN_ALLOW_THREADS_S(self->thread_state);
     self->peer_cert = SSL_get_peer_certificate(self->ssl);
-    PySSL_END_ALLOW_THREADS
+    PySSL_END_ALLOW_THREADS_S(self->thread_state);
     self->handshake_done = 1;
 
     Py_RETURN_NONE;
@@ -1991,10 +1995,10 @@ _ssl__SSLSocket_write_impl(PySSLSocket *self, Py_buffer *b)
     }
 
     do {
-        PySSL_BEGIN_ALLOW_THREADS
+        PySSL_BEGIN_ALLOW_THREADS_S(self->thread_state);
         len = SSL_write(self->ssl, b->buf, (int)b->len);
         err = SSL_get_error(self->ssl, len);
-        PySSL_END_ALLOW_THREADS
+        PySSL_END_ALLOW_THREADS_S(self->thread_state);
 
         if (PyErr_CheckSignals())
             goto error;
@@ -2046,9 +2050,9 @@ _ssl__SSLSocket_pending_impl(PySSLSocket *self)
 {
     int count = 0;
 
-    PySSL_BEGIN_ALLOW_THREADS
+    PySSL_BEGIN_ALLOW_THREADS_S(self->thread_state);
     count = SSL_pending(self->ssl);
-    PySSL_END_ALLOW_THREADS
+    PySSL_END_ALLOW_THREADS_S(self->thread_state);
     if (count < 0)
         return PySSL_SetError(self, count, __FILE__, __LINE__);
     else
@@ -2134,10 +2138,10 @@ _ssl__SSLSocket_read_impl(PySSLSocket *self, int len, int group_right_1,
         deadline = _PyTime_GetMonotonicClock() + timeout;
 
     do {
-        PySSL_BEGIN_ALLOW_THREADS
+        PySSL_BEGIN_ALLOW_THREADS_S(self->thread_state);
         count = SSL_read(self->ssl, mem, len);
         err = SSL_get_error(self->ssl, count);
-        PySSL_END_ALLOW_THREADS
+        PySSL_END_ALLOW_THREADS_S(self->thread_state);
 
         if (PyErr_CheckSignals())
             goto error;
@@ -2228,7 +2232,7 @@ _ssl__SSLSocket_shutdown_impl(PySSLSocket *self)
         deadline = _PyTime_GetMonotonicClock() + timeout;
 
     while (1) {
-        PySSL_BEGIN_ALLOW_THREADS
+        PySSL_BEGIN_ALLOW_THREADS_S(self->thread_state);
         /* Disable read-ahead so that unwrap can work correctly.
          * Otherwise OpenSSL might read in too much data,
          * eating clear text data that happens to be
@@ -2240,7 +2244,7 @@ _ssl__SSLSocket_shutdown_impl(PySSLSocket *self)
         if (self->shutdown_seen_zero)
             SSL_set_read_ahead(self->ssl, 0);
         err = SSL_shutdown(self->ssl);
-        PySSL_END_ALLOW_THREADS
+        PySSL_END_ALLOW_THREADS_S(self->thread_state);
 
         /* If err == 1, a secure shutdown with SSL_shutdown() is complete */
         if (err > 0)
