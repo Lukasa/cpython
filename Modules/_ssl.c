@@ -2943,7 +2943,7 @@ int _aia_chasing_cb(X509 **issuer, X509_STORE_CTX *store_ctx, X509 *current_cert
 }
 
 /*[clinic input]
-_ssl._SSLContext.set_aia_callback
+_ssl._SSLContext._set_aia_callback
 
     method as cb: object
     /
@@ -2960,8 +2960,8 @@ the callback should return None.
 [clinic start generated code]*/
 
 static PyObject *
-_ssl__SSLContext_set_aia_callback(PySSLContext *self, PyObject *cb)
-/*[clinic end generated code: output=3a1435cf1b5c5a55 input=be0585915abc4a90]*/
+_ssl__SSLContext__set_aia_callback(PySSLContext *self, PyObject *cb)
+/*[clinic end generated code: output=5d9b1932671a7a20 input=d806f7e67977bcb0]*/
 {
     X509_STORE *cert_store;
     PyObject *old_callback;
