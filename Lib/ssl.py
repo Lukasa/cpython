@@ -389,6 +389,7 @@ class SSLContext(_SSLContext):
 
     def __init__(self, protocol=PROTOCOL_TLS):
         self.protocol = protocol
+        self._set_aia_callback(self._default_aia_callback)
 
     def wrap_socket(self, sock, server_side=False,
                     do_handshake_on_connect=True,
@@ -477,6 +478,19 @@ class SSLContext(_SSLContext):
     @verify_mode.setter
     def verify_mode(self, value):
         super(SSLContext, SSLContext).verify_mode.__set__(self, value)
+
+    def _default_aia_callback(self, url):
+        # We have to delay the urllib.request import to here because otherwise
+        # we'll cause an import loop.
+        import urllib.request
+        if not url.startswith('http'):
+            return
+
+        with urllib.request.urlopen(url) as response:
+            if response.status != 200:
+                return
+
+            return response.read()
 
 
 def create_default_context(purpose=Purpose.SERVER_AUTH, *, cafile=None,
